@@ -20,9 +20,12 @@ Follow this priority order:
 ### 1. Check Existing Directories
 
 ```bash
+# Resolve search root: main repo when inside a worktree, cwd otherwise
+SEARCH_ROOT="${MAIN_REPO:-.}"
+
 # Check in priority order
-ls -d .worktrees 2>/dev/null     # Preferred (hidden)
-ls -d worktrees 2>/dev/null      # Alternative
+ls -d "$SEARCH_ROOT/.worktrees" 2>/dev/null     # Preferred (hidden)
+ls -d "$SEARCH_ROOT/worktrees" 2>/dev/null       # Alternative
 ```
 
 **If found:** Use that directory. If both exist, `.worktrees` wins.
@@ -30,7 +33,7 @@ ls -d worktrees 2>/dev/null      # Alternative
 ### 2. Check CLAUDE.md
 
 ```bash
-grep -i "worktree.*director" CLAUDE.md 2>/dev/null
+grep -i "worktree.*director" "$SEARCH_ROOT/CLAUDE.md" 2>/dev/null
 ```
 
 **If preference specified:** Use it without asking.
@@ -56,7 +59,8 @@ Which would you prefer?
 
 ```bash
 # Check if directory is ignored (respects local, global, and system gitignore)
-git check-ignore -q .worktrees 2>/dev/null || git check-ignore -q worktrees 2>/dev/null
+# Run from $MAIN_REPO so paths resolve correctly when inside a worktree
+git -C "$MAIN_REPO" check-ignore -q .worktrees 2>/dev/null || git -C "$MAIN_REPO" check-ignore -q worktrees 2>/dev/null
 ```
 
 **If NOT ignored:**
@@ -74,27 +78,58 @@ No .gitignore verification needed - outside project entirely.
 
 ## Creation Steps
 
+### 0. Worktree-aware context detection
+
+**Before anything else**, detect whether you are already inside a worktree and
+capture the current HEAD. This matters because directory selection (step 1–2)
+may navigate to the main repo, losing the original HEAD.
+
+```bash
+# Capture current HEAD *before* any directory navigation
+START_POINT=$(git rev-parse HEAD)
+
+# Detect: am I inside a worktree (not the main checkout)?
+GIT_DIR=$(git rev-parse --git-dir)
+GIT_COMMON=$(git rev-parse --git-common-dir)
+if [ "$GIT_DIR" != "$GIT_COMMON" ]; then
+  IN_WORKTREE=true
+  MAIN_REPO=$(git -C "$(git rev-parse --git-common-dir)" rev-parse --show-toplevel 2>/dev/null)
+else
+  IN_WORKTREE=false
+  MAIN_REPO=$(git rev-parse --show-toplevel)
+fi
+```
+
+**Why:** `git worktree add -b NAME` without a start-point defaults to HEAD of
+whichever directory you run it from. If directory selection navigates to the
+main repo, HEAD silently changes to the main branch. Capturing `START_POINT`
+up front and passing it explicitly prevents this.
+
+**When `IN_WORKTREE=true`:** directory selection (`.worktrees/`, CLAUDE.md)
+should be resolved relative to `$MAIN_REPO`, not the current worktree root —
+worktree directories live in the main checkout, not inside sibling worktrees.
+
 ### 1. Detect Project Name
 
 ```bash
-project=$(basename "$(git rev-parse --show-toplevel)")
+project=$(basename "$MAIN_REPO")
 ```
 
 ### 2. Create Worktree
 
 ```bash
-# Determine full path
+# Determine full path (resolve relative to $MAIN_REPO when in a worktree)
 case $LOCATION in
   .worktrees|worktrees)
-    path="$LOCATION/$BRANCH_NAME"
+    path="$MAIN_REPO/$LOCATION/$BRANCH_NAME"
     ;;
   ~/.config/superpowers/worktrees/*)
     path="~/.config/superpowers/worktrees/$project/$BRANCH_NAME"
     ;;
 esac
 
-# Create worktree with new branch
-git worktree add "$path" -b "$BRANCH_NAME"
+# Create worktree — always pass explicit start-point
+git worktree add "$path" -b "$BRANCH_NAME" "$START_POINT"
 cd "$path"
 ```
 
@@ -145,6 +180,7 @@ Ready to implement <feature-name>
 
 | Situation | Action |
 |-----------|--------|
+| Already inside a worktree | Capture HEAD first, resolve dirs relative to main repo |
 | `.worktrees/` exists | Use it (verify ignored) |
 | `worktrees/` exists | Use it (verify ignored) |
 | Both exist | Use `.worktrees/` |
@@ -169,6 +205,11 @@ Ready to implement <feature-name>
 
 - **Problem:** Can't distinguish new bugs from pre-existing issues
 - **Fix:** Report failures, get explicit permission to proceed
+
+### Ignoring worktree-in-worktree context
+
+- **Problem:** When already inside a worktree, directory selection navigates to the main repo. `git worktree add -b NAME` without a start-point defaults to the main repo's HEAD, silently branching from the wrong commit.
+- **Fix:** Always capture `START_POINT=$(git rev-parse HEAD)` before any navigation, and pass it explicitly: `git worktree add "$path" -b "$BRANCH_NAME" "$START_POINT"`
 
 ### Hardcoding setup commands
 
