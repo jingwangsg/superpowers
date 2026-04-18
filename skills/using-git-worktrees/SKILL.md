@@ -13,6 +13,17 @@ Git worktrees create isolated workspaces sharing the same repository, allowing w
 
 **Announce at start:** "I'm using the using-git-worktrees skill to set up an isolated workspace."
 
+## CRITICAL: Do Not Use Built-in Worktree Tools
+
+**Never use any of the following:**
+
+- `EnterWorktree` / `ExitWorktree` tools
+- Agent tool with `isolation: "worktree"` parameter
+
+These tools default to branching from `main`, not your current branch. This causes silent wrong-branch bugs where your worktree starts from the wrong commit and you don't notice until much later.
+
+**Always use `git worktree` commands directly via Bash**, following the steps in this skill. Direct commands let you control exactly which commit the new worktree branches from.
+
 ## Directory Selection Process
 
 Follow this priority order:
@@ -235,6 +246,7 @@ Ready to implement auth feature
 ## Red Flags
 
 **Never:**
+- Use `EnterWorktree`/`ExitWorktree` tools or Agent `isolation: "worktree"` (they branch from `main`, not current branch)
 - Create worktree without verifying it's ignored (project-local)
 - Skip baseline test verification
 - Proceed with failing tests without asking
